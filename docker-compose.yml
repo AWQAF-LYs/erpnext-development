@@ -1,0 +1,56 @@
+services:
+  mariadb:
+    image: mariadb:10.8
+    restart: always
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required in .env}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    networks:
+      - erpnext-network
+
+  redis:
+    image: redis:alpine
+    restart: always
+    networks:
+      - erpnext-network
+
+  frappe:
+    build: .
+    user: root # Runs init.sh as root, then bench commands switch to frappe user
+    working_dir: /home/frappe
+    env_file:
+      - ./.env
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required in .env}
+      - FRAPPE_ADMIN_PASSWORD=${FRAPPE_ADMIN_PASSWORD:?FRAPPE_ADMIN_PASSWORD is required in .env}
+      - FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:?FRAPPE_SITE_NAME is required in .env}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required in .env}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required in .env}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:?AWS_DEFAULT_REGION is required in .env}
+      - S3_BACKUP_URL=${S3_BACKUP_URL:?S3_BACKUP_URL is required in .env}
+      - SHELL=/bin/bash
+    volumes:
+      - .:/workspace # Mount current directory for easy access if needed, optional
+      - frappe-data:/home/frappe # Persists /home/frappe (includes bench and sites)
+    ports: # Make sure FRAPPE_CONTAINER_PORT in .env matches FRAPPE_INTERNAL_PORT in env.config
+      - "${FRAPPE_HOST_PORT:?FRAPPE_HOST_PORT is required}:${FRAPPE_CONTAINER_PORT:?FRAPPE_CONTAINER_PORT is required}"
+      - "${SOCKETIO_HOST_PORT:-9000}:${SOCKETIO_CONTAINER_PORT:-9000}" # For socket.io
+    networks:
+      - erpnext-network
+    depends_on:
+      - mariadb
+      - redis
+
+volumes:
+  mariadb-data:
+  frappe-data:
+
+networks:
+  erpnext-network:
+    driver: bridge
