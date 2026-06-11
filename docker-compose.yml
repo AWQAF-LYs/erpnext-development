@@ -1,46 +1,57 @@
+version: '3.8'
+
 services:
-  redis:
-    image: redis:alpine
-    restart: always
+  # Split Redis nodes for enterprise queuing and locking safety
+  redis-cache:
+    image: redis:6.2-alpine
     networks:
       - erpnext-network
     deploy:
       replicas: 1
       placement:
         constraints:
-          - node.role == manager # Pin Redis to your master node for stability# Redis should run centrally or on your master node
+          - node.role == manager
+
+  redis-queue:
+    image: redis:6.2-alpine
+    networks:
+      - erpnext-network
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
 
   frappe:
-    user: root # Runs init.sh as root, then bench commands switch to frappe user
+    image: frappe-custom:latest 
+    user: root
     working_dir: /home/frappe
     env_file:
       - ./.env
     environment:
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required in .env}
-      - FRAPPE_ADMIN_PASSWORD=${FRAPPE_ADMIN_PASSWORD:?FRAPPE_ADMIN_PASSWORD is required in .env}
-      - FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:?FRAPPE_SITE_NAME is required in .env}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required in .env}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required in .env}
-      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:?AWS_DEFAULT_REGION is required in .env}
-      - S3_BACKUP_URL=${S3_BACKUP_URL:?S3_BACKUP_URL is required in .env}
+      - MARIADB_HOST=proxysql
+      - MARIADB_PORT=6033
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?Required}
+      - FRAPPE_ADMIN_PASSWORD=${FRAPPE_ADMIN_PASSWORD:?Required}
+      - FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:?Required}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+      - S3_BACKUP_URL=${S3_BACKUP_URL}
       - SHELL=/bin/bash
     volumes:
+      # High-Availability GlusterFS mapping
       - /mnt/shared-erp-data:/home/frappe/frappe-bench/sites
-    ports: # Make sure FRAPPE_CONTAINER_PORT in .env matches FRAPPE_INTERNAL_PORT in env.config
-      - "${FRAPPE_HOST_PORT:?FRAPPE_HOST_PORT is required}:${FRAPPE_CONTAINER_PORT:?FRAPPE_CONTAINER_PORT is required}"
-      - "${SOCKETIO_HOST_PORT:-9000}:${SOCKETIO_CONTAINER_PORT:-9000}" # For socket.io
+    ports: 
+      - "${FRAPPE_HOST_PORT}:${FRAPPE_CONTAINER_PORT}"
+      - "${SOCKETIO_HOST_PORT:-9000}:9000" # Maps local unified supervisor socket server
     networks:
       - erpnext-network
     deploy:
       mode: replicated
-      replicas: 3 # Automatically scales and runs 1 copy on every single server!
+      replicas: 3
       restart_policy:
         condition: on-failure
-
-
-volumes:
-  mariadb-data:
-  frappe-data:
 
 networks:
   erpnext-network:
