@@ -40,7 +40,7 @@ else
 fi
 
 # Set default values if not provided by env.config or if file doesn't exist
-FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:-"erpnext.local"}
+FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:-"erp.local"}
 FRAPPE_INTERNAL_PORT=${FRAPPE_INTERNAL_PORT:-8000} # Default internal port for bench serve
 FRAPPE_BRANCH=${FRAPPE_BRANCH:-version-15}
 # --- END: Load configuration ---
@@ -57,9 +57,9 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   echo "🛠️ Installing & configuring bench as user 'frappe'..."
   su - frappe -c "bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"
 
-  echo "⚙️ Pointing at your DB & Redis containers..."
+  echo "⚙️ Pointing at your Database Cluster & Redis containers..."
   su - frappe -c "cd /home/frappe/frappe-bench && \
-    bench set-mariadb-host mariadb && \
+    bench set-mariadb-host proxysql && \
     bench set-config -g redis_cache 'redis://redis:6379' && \
     bench set-config -g redis_queue 'redis://redis:6379' && \
     bench set-config -g redis_socketio 'redis://redis:6379'"
@@ -80,7 +80,7 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
         FETCH_CMDS_STRING="${FETCH_CMDS_STRING}bench get-app ${app_name_trimmed} --branch ${FRAPPE_BRANCH} && "
         INSTALL_CMDS_STRING="${INSTALL_CMDS_STRING}bench --site \"${FRAPPE_SITE_NAME}\" install-app ${app_name_trimmed} && "
       fi
-    done < "$APPS_FILE_PATH"
+     Papel done < "$APPS_FILE_PATH"
 
     # Remove trailing ' && ' if commands were added
     if [ -n "$FETCH_CMDS_STRING" ]; then
@@ -100,20 +100,18 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
     echo "ℹ️ No apps specified to fetch."
   fi
 
-  echo "🌐 Creating site '$FRAPPE_SITE_NAME' & installing apps as user 'frappe'..."
+  echo "🌐 Creating site '$FRAPPE_SITE_NAME' on the external Galera/ProxySQL Cluster..."
   SITE_SETUP_COMMANDS="bench new-site \"$FRAPPE_SITE_NAME\" \
     --force \
+    --db-host=proxysql \
+    --db-port=6033 \
     --mariadb-root-password=${MYSQL_ROOT_PASSWORD} \
-    --admin-password=${FRAPPE_ADMIN_PASSWORD} \
-    --mariadb-user-host-login-scope='%' " # TODO: Make passwords configurable
+    --admin-password=${FRAPPE_ADMIN_PASSWORD}"
 
   if [ -n "$INSTALL_CMDS_STRING" ]; then
     SITE_SETUP_COMMANDS="${SITE_SETUP_COMMANDS} && ${INSTALL_CMDS_STRING}"
   else
     echo "ℹ️ No apps specified from $APPS_FILE_PATH to install on the new site."
-    # Consider installing a default app like 'frappe' if no apps are listed,
-    # as a site needs at least the frappe framework app.
-    # However, 'bench get-app erpnext' usually implies frappe is a dependency.
   fi
 
   SITE_SETUP_COMMANDS="${SITE_SETUP_COMMANDS} && \
@@ -128,8 +126,6 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   echo "✅ Bench setup complete!"
 else
   echo "ℹ️ Frappe bench appears to be already initialized. Skipping bench init and site creation."
-  # Ensure ownership is correct on subsequent runs too, especially if bench was initialized by root before
-  # su - frappe -c "cd /home/frappe/frappe-bench && chown -R frappe:frappe ."
 fi
 
 # Generate a proper Supervisor conf from bench itself,
