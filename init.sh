@@ -57,14 +57,18 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   echo "🛠️ Installing & configuring bench as user 'frappe'..."
   su - frappe -c "bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"
 
-  echo "⚙️ Pointing at your Database Cluster & Redis containers..."
-  su - frappe -c "cd /home/frappe/frappe-bench && \
-    bench set-mariadb-host proxysql && \
-    bench set-config -g redis_cache 'redis://redis:6379' && \
-    bench set-config -g redis_queue 'redis://redis:6379' && \
-    bench set-config -g redis_socketio 'redis://redis:6379'"
-
-  APPS_FILE_PATH="/home/frappe/apps.txt"
+  echo "⚙️ Pointing at your Database Cluster & High-Performance Redis Nodes..."
+    su - frappe -c "cd /home/frappe/frappe-bench && \
+      bench set-mariadb-host proxysql && \
+      bench set-config -g redis_cache 'redis://redis-cache:6379' && \
+      bench set-config -g redis_queue 'redis://redis-queue:6379' && \
+      bench set-config -g redis_socketio 'redis://redis-queue:6379'"
+  
+    # HACK: Fixes the missing app definition on secondary nodes using GlusterFS
+    echo "frappe" > /home/frappe/frappe-bench/sites/apps.txt
+    if [ -f "/home/frappe/apps.txt" ]; then
+      cat /home/frappe/apps.txt >> /home/frappe/frappe-bench/sites/apps.txt
+    fi
   # FRAPPE_SITE_NAME is now set from env.config or default
 
   FETCH_CMDS_STRING=""
