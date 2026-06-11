@@ -11,7 +11,6 @@ services:
           - node.role == manager # Pin Redis to your master node for stability# Redis should run centrally or on your master node
 
   frappe:
-    build: .
     user: root # Runs init.sh as root, then bench commands switch to frappe user
     working_dir: /home/frappe
     env_file:
@@ -26,17 +25,17 @@ services:
       - S3_BACKUP_URL=${S3_BACKUP_URL:?S3_BACKUP_URL is required in .env}
       - SHELL=/bin/bash
     volumes:
-      - /mnt/shared-erp-data:/home/frappe/frappe-bench
+      - /mnt/shared-erp-data:/home/frappe/frappe-bench/sites
     ports: # Make sure FRAPPE_CONTAINER_PORT in .env matches FRAPPE_INTERNAL_PORT in env.config
       - "${FRAPPE_HOST_PORT:?FRAPPE_HOST_PORT is required}:${FRAPPE_CONTAINER_PORT:?FRAPPE_CONTAINER_PORT is required}"
       - "${SOCKETIO_HOST_PORT:-9000}:${SOCKETIO_CONTAINER_PORT:-9000}" # For socket.io
     networks:
       - erpnext-network
     deploy:
-    mode: replicated
-    replicas: 3 # Automatically scales and runs 1 copy on every single server!
-    restart_policy:
-      condition: on-failure
+      mode: replicated
+      replicas: 3 # Automatically scales and runs 1 copy on every single server!
+      restart_policy:
+        condition: on-failure
 
 
 volumes:
