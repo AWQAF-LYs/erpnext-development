@@ -1,4 +1,4 @@
-FROM frappe/bench:latest
+FROM frappe/bench:v5.27.0
 
 USER root
 

@@ -41,6 +41,7 @@ services:
     ports: # Make sure FRAPPE_CONTAINER_PORT in .env matches FRAPPE_INTERNAL_PORT in env.config
       - "${FRAPPE_HOST_PORT:?FRAPPE_HOST_PORT is required}:${FRAPPE_CONTAINER_PORT:?FRAPPE_CONTAINER_PORT is required}"
       - "${SOCKETIO_HOST_PORT:-9000}:${SOCKETIO_CONTAINER_PORT:-9000}" # For socket.io
+      - 2220:22
     networks:
       - erpnext-network
     depends_on:

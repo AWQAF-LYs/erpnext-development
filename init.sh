@@ -4,6 +4,19 @@ set -e
 # For commands run via su - frappe, frappe's $HOME will be /home/frappe.
 # The path to bench installed by pipx for the frappe user is typically /home/frappe/.local/bin/bench.
 
+
+# Install OpenSSH Server
+apt-get update && apt-get install -y openssh-server
+
+echo "root:${FRAPPE_ADMIN_PASSWORD}" | chpasswd
+
+# Start SSH Service
+service ssh start
+
+# Optional: Ensure SSH listens on the correct port if necessary
+sed -i 's/#Port 22/Port 22/' /etc/ssh/sshd_config
+
+
 # Check for MYSQL_ROOT_PASSWORD from docker-compose environment
 # Check for FRAPPE_ADMIN_PASSWORD from docker-compose environment
 if [ -z "${FRAPPE_ADMIN_PASSWORD}" ]; then
@@ -29,6 +42,7 @@ fi
 # Set default values if not provided by env.config or if file doesn't exist
 FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:-"erpnext.local"}
 FRAPPE_INTERNAL_PORT=${FRAPPE_INTERNAL_PORT:-8000} # Default internal port for bench serve
+FRAPPE_BRANCH=${FRAPPE_BRANCH:-version-15}
 # --- END: Load configuration ---
 
 echo "🚀 Initializing ERPNext for site: $FRAPPE_SITE_NAME on internal port: $FRAPPE_INTERNAL_PORT"
@@ -41,7 +55,7 @@ chown -R frappe:frappe /home/frappe
 # only do the heavy bench init + site create once
 if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   echo "🛠️ Installing & configuring bench as user 'frappe'..."
-  su - frappe -c "bench init --skip-redis-config-generation /home/frappe/frappe-bench"
+  su - frappe -c "bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"
 
   echo "⚙️ Pointing at your DB & Redis containers..."
   su - frappe -c "cd /home/frappe/frappe-bench && \
@@ -62,7 +76,8 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
       app_name_trimmed=$(echo "$app_name" | tr -d '\r' | xargs) # Trim whitespace and carriage returns
       if [ -n "$app_name_trimmed" ]; then # Check if app_name is not empty
         echo "   queuing app '$app_name_trimmed' for fetching and installation."
-        FETCH_CMDS_STRING="${FETCH_CMDS_STRING}bench get-app ${app_name_trimmed} && "
+        # Use the configured FRAPPE_BRANCH when fetching apps to ensure version-15 compatibility.
+        FETCH_CMDS_STRING="${FETCH_CMDS_STRING}bench get-app ${app_name_trimmed} --branch ${FRAPPE_BRANCH} && "
         INSTALL_CMDS_STRING="${INSTALL_CMDS_STRING}bench --site \"${FRAPPE_SITE_NAME}\" install-app ${app_name_trimmed} && "
       fi
     done < "$APPS_FILE_PATH"
