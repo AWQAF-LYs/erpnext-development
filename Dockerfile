@@ -2,11 +2,11 @@ FROM frappe/bench:v5.27.0
 
 USER root
 
-# 1. Install all system deps (including supervisor & pipx) at build-time:
+# 1. Install all system deps (including openssh-server, supervisor & pipx) at build-time:
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
       git python3-pip pipx python3-dev python3-setuptools python3-venv virtualenv \
-      nodejs npm xvfb libfontconfig wkhtmltopdf supervisor && \
+      nodejs npm xvfb libfontconfig wkhtmltopdf supervisor openssh-server && \
     npm install -g yarn && \
     rm -rf /var/lib/apt/lists/*
 
