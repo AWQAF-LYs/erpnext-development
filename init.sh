@@ -35,31 +35,42 @@ FRAPPE_BRANCH=${FRAPPE_BRANCH:-"version-15"}
 
 echo "🚀 Site Configuration Target: $FRAPPE_SITE_NAME on Port: $FRAPPE_INTERNAL_PORT"
 
-# Ensure the shared network mount points are ready and owned by the frappe worker context
+# Create a physical supervisorctl mock binary to safely intercept Python subprocess hooks
+mkdir -p /home/frappe/.local/bin
+cat << 'EOF' > /home/frappe/.local/bin/supervisorctl
+#!/bin/sh
+echo "Muted Supervisor Hook (${*})"
+exit 0
+EOF
+chmod +x /home/frappe/.local/bin/supervisorctl
+chown frappe:frappe /home/frappe/.local/bin/supervisorctl
+
+# Ensure shared cluster network folders exist
 mkdir -p /storage/sites
-chown -R frappe:frappe /storage/sites
 
 # --- Bench Framework Engine Initialization ---
 if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   echo "🛠️ Creating structural bench base files inside high-performance layer..."
   
-  # Standard login subshell invocation works natively now that .pyenv is preserved
-  if ! su - frappe -c "bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"; then
+  if ! su frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH\" && bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"; then
       echo "❌ FATAL: Core framework initialization failed."
       exit 1
   fi
 
   echo "🔗 Linking bench sites array directly to High-Availability Storage Volume..."
-  # If the shared volume is empty, migrate the initial structural framework boilerplate across
   if [ -z "$(ls -A /storage/sites)" ]; then
-      cp -R /home/frappe/frappe-bench/sites/* /storage/sites/
+      cp -R /home/frappe/frappe-bench/sites/* /storage/sites/ 2>/dev/null || true
   fi
   rm -rf /home/frappe/frappe-bench/sites
   ln -s /storage/sites /home/frappe/frappe-bench/sites
+  
+  # CRITICAL FIX: Ensure complete read/write clearance across the symlinked volume cluster
+  chown -R frappe:frappe /storage/sites
+  chown -R frappe:frappe /home/frappe
   chown -h frappe:frappe /home/frappe/frappe-bench/sites
 
   echo "⚙️ Networking application layers into cluster configurations..."
-  su - frappe -c "cd /home/frappe/frappe-bench && \
+  su frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH\" && cd /home/frappe/frappe-bench && \
     bench set-mariadb-host proxysql && \
     bench set-config -g redis_cache 'redis://redis-cache:6379' && \
     bench set-config -g redis_queue 'redis://redis-queue:6379' && \
@@ -86,11 +97,10 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
 
   if [ -n "$FETCH_CMDS_STRING" ]; then
     echo "📦 Downloading linked app files..."
-    su - frappe -c "cd /home/frappe/frappe-bench && $FETCH_CMDS_STRING"
+    su frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH\" && cd /home/frappe/frappe-bench && $FETCH_CMDS_STRING"
   fi
 
   echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
-  # FIXED: Swapped escaped double quotes to resolve evaluation parsing errors in Python click inputs
   SITE_SETUP_COMMANDS="bench new-site \"$FRAPPE_SITE_NAME\" \
     --force \
     --db-host=proxysql \
@@ -106,17 +116,19 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
     bench --site \"$FRAPPE_SITE_NAME\" set-config developer_mode 1 && \
     bench --site \"$FRAPPE_SITE_NAME\" clear-cache"
 
-  if ! su - frappe -c "supervisorctl() { echo 'Muted Supervisor Hook'; }; export -f supervisorctl; cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
+  if ! su frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH\" && cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
       echo "❌ FATAL: Framework app injection sync failed."
       exit 1
   fi
   
-  su - frappe -c "cd /home/frappe/frappe-bench && bench use \"$FRAPPE_SITE_NAME\""
+  su frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH\" && cd /home/frappe/frappe-bench && bench use \"$FRAPPE_SITE_NAME\""
   echo "✅ Cluster schema sync complete!"
 else
   echo "ℹ️ Existing cluster initialization detected. Re-linking shared storage path..."
   rm -rf /home/frappe/frappe-bench/sites
   ln -s /storage/sites /home/frappe/frappe-bench/sites
+  chown -R frappe:frappe /storage/sites
+  chown -R frappe:frappe /home/frappe
   chown -h frappe:frappe /home/frappe/frappe-bench/sites
 fi
 
@@ -130,7 +142,7 @@ chown frappe:frappe /storage/sites/apps.txt 2>/dev/null || true
 # Generate process manager properties configurations
 SUPERVISOR_CONFIG_FILE="/home/frappe/frappe-bench/config/supervisor.conf"
 rm -f "$SUPERVISOR_CONFIG_FILE"
-su - frappe -c "cd /home/frappe/frappe-bench && bench setup supervisor --skip-redis"
+su frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH\" && cd /home/frappe/frappe-bench && bench setup supervisor --skip-redis"
 
 # Adjust worker parameters for the unified image layout
 NEW_WEB_COMMAND="/home/frappe/.local/bin/bench serve --port ${FRAPPE_INTERNAL_PORT}"
@@ -155,6 +167,9 @@ if [ -f "$SUPERVISOR_CONFIG_FILE" ]; then
     mv "$TEMP_AWK_OUTPUT_FILE" "$SUPERVISOR_CONFIG_FILE"
     chown frappe:frappe "$SUPERVISOR_CONFIG_FILE"
 fi
+
+# Remove our temporary mock binary before passing execution to the live orchestrator
+rm -f /home/frappe/.local/bin/supervisorctl
 
 mkdir -p /etc/supervisor/conf.d/
 ln -sf "$SUPERVISOR_CONFIG_FILE" /etc/supervisor/conf.d/frappe-bench.conf
