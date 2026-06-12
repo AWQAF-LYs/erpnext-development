@@ -81,8 +81,8 @@ EOF
     su frappe -s /bin/bash << EOF
     export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
     cd /home/frappe/frappe-bench
-    # Bypassing overlay DNS by using the Docker bridge host gateway to hit ProxySQL's published port
-    bench set-mariadb-host 172.17.0.1
+    # Runtime commands run through ProxySQL
+    bench set-mariadb-host erpdbcluster-cluster-0bxgsy_proxysql
     bench set-config -g redis_cache redis://redis-cache:6379
     bench set-config -g redis_queue redis://redis-queue:6379
     bench set-config -g redis_socketio redis://redis-cache:6379
@@ -115,13 +115,13 @@ EOF
 
     echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
     
-    # Base site creation command string pointing directly to the network gateway routing loop
+    # CRITICAL: We bypass ProxySQL admin limits during creation by hitting Galera Node 1 directly via Swarm routing mesh
     SITE_SETUP_COMMANDS="cd /home/frappe/frappe-bench && \
         bench new-site ${FRAPPE_SITE_NAME} \
         --force \
         --mariadb-user-host-login-scope='%' \
-        --db-host=172.17.0.1 \
-        --db-port=6033 \
+        --db-host=erpdbcluster-cluster-0bxgsy_galera-node1 \
+        --db-port=3306 \
         --db-root-username=root \
         --db-root-password=${MYSQL_ROOT_PASSWORD:-Aa123123} \
         --admin-password=${RUN_TIME_ADMIN_PASS}"
