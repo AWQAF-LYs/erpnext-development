@@ -34,22 +34,26 @@ services:
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?Required}
       - FRAPPE_ADMIN_PASSWORD=${FRAPPE_ADMIN_PASSWORD:?Required}
       - FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:?Required}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
-      - S3_BACKUP_URL=${S3_BACKUP_URL}
+      # FIXED: Added safe fallbacks so empty strings in .env don't break Swarm interpolation
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - S3_BACKUP_URL=${S3_BACKUP_URL:-}
       - SHELL=/bin/bash
     volumes:
-      # High-Availability GlusterFS mapping
-      - /mnt/shared-erp-data:/home/frappe/frappe-bench/sites
+      # FIXED: Mount the parent directory. This allows bench init to run 
+      # cleanly without hitting directory conflict issues.
+      - /mnt/shared-erp-data:/home/frappe
     ports: 
       - "${FRAPPE_HOST_PORT}:${FRAPPE_CONTAINER_PORT}"
-      - "${SOCKETIO_HOST_PORT:-9000}:9000" # Maps local unified supervisor socket server
+      - "${SOCKETIO_HOST_PORT:-9000}:9000" 
     networks:
       - erpnext-network
     deploy:
       mode: replicated
-      replicas: 3
+      # TIP: Keep this at 1 for the very first initialization, 
+      # then scale up to 3 once the database is fully seeded!
+      replicas: 1
       restart_policy:
         condition: on-failure
 
