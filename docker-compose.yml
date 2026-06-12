@@ -40,7 +40,7 @@ services:
       - SHELL=/bin/bash
     volumes:
       # FIXED: Changed destination path to prevent obliterating the container's native .pyenv system environment
-      - /mnt/shared-erp-data:/storage/sites
+      - /mnt/shared-erp-data:/storage
     ports: 
       - "${FRAPPE_HOST_PORT}:${FRAPPE_CONTAINER_PORT}"
       - "${SOCKETIO_HOST_PORT:-9000}:9000" 
