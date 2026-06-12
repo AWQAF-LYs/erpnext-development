@@ -12,7 +12,6 @@ safe_run() {
 
 echo "🏁 Container execution engine running..."
 
-# Dynamic environment secret capture (No hardcoded creds)
 RUN_TIME_ADMIN_PASS="${FRAPPE_ADMIN_PASSWORD:-admin123123}"
 
 # Configure background secure access points safely
@@ -20,11 +19,6 @@ if [ -f "/etc/ssh/sshd_config" ]; then
     safe_run sed -i 's/#Port 22/Port 22/' /etc/ssh/sshd_config
 fi
 safe_run service ssh start 2>/dev/null || true
-
-# CRITICAL: Define absolute paths explicitly for the execution runner environment
-export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-export HOME="/home/frappe"
-export USER="frappe"
 
 # Ingest configuration mappings if present
 ENV_CONFIG_FILE="/home/frappe/env.config"
@@ -41,21 +35,31 @@ FRAPPE_BRANCH=${FRAPPE_BRANCH:-"version-15"}
 
 echo "🚀 Site Configuration Target: $FRAPPE_SITE_NAME on Port: $FRAPPE_INTERNAL_PORT"
 
-# Safe ownership handshake across network storage clusters
-chown -R frappe:frappe /home/frappe 2>/dev/null || echo "📁 Storage cluster permissions verified."
+# Ensure the shared network mount points are ready and owned by the frappe worker context
+mkdir -p /storage/sites
+chown -R frappe:frappe /storage/sites
 
 # --- Bench Framework Engine Initialization ---
 if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
-  echo "🛠️ Creating structural bench base files..."
+  echo "🛠️ Creating structural bench base files inside high-performance layer..."
   
-  # FIXED: Swapped 'su' out for a direct binary bash call execution profile
-  if ! /bin/bash -c "bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"; then
+  # Standard login subshell invocation works natively now that .pyenv is preserved
+  if ! su - frappe -c "bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"; then
       echo "❌ FATAL: Core framework initialization failed."
       exit 1
   fi
 
-  echo "⚙️ Networking application layers into high-performance cluster configurations..."
-  /bin/bash -c "cd /home/frappe/frappe-bench && \
+  echo "🔗 Linking bench sites array directly to High-Availability Storage Volume..."
+  # If the shared volume is empty, migrate the initial structural framework boilerplate across
+  if [ -z "$(ls -A /storage/sites)" ]; then
+      cp -R /home/frappe/frappe-bench/sites/* /storage/sites/
+  fi
+  rm -rf /home/frappe/frappe-bench/sites
+  ln -s /storage/sites /home/frappe/frappe-bench/sites
+  chown -h frappe:frappe /home/frappe/frappe-bench/sites
+
+  echo "⚙️ Networking application layers into cluster configurations..."
+  su - frappe -c "cd /home/frappe/frappe-bench && \
     bench set-mariadb-host proxysql && \
     bench set-config -g redis_cache 'redis://redis-cache:6379' && \
     bench set-config -g redis_queue 'redis://redis-queue:6379' && \
@@ -82,16 +86,17 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
 
   if [ -n "$FETCH_CMDS_STRING" ]; then
     echo "📦 Downloading linked app files..."
-    /bin/bash -c "cd /home/frappe/frappe-bench && $FETCH_CMDS_STRING"
+    su - frappe -c "cd /home/frappe/frappe-bench && $FETCH_CMDS_STRING"
   fi
 
   echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
+  # FIXED: Swapped escaped double quotes to resolve evaluation parsing errors in Python click inputs
   SITE_SETUP_COMMANDS="bench new-site \"$FRAPPE_SITE_NAME\" \
     --force \
     --db-host=proxysql \
     --db-port=6033 \
-    --mariadb-root-password='${MYSQL_ROOT_PASSWORD}' \
-    --admin-password='${RUN_TIME_ADMIN_PASS}'"
+    --mariadb-root-password=\"$MYSQL_ROOT_PASSWORD\" \
+    --admin-password=\"$RUN_TIME_ADMIN_PASS\""
 
   if [ -n "$INSTALL_CMDS_STRING" ]; then
     SITE_SETUP_COMMANDS="${SITE_SETUP_COMMANDS} && ${INSTALL_CMDS_STRING}"
@@ -101,30 +106,31 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
     bench --site \"$FRAPPE_SITE_NAME\" set-config developer_mode 1 && \
     bench --site \"$FRAPPE_SITE_NAME\" clear-cache"
 
-  # FIXED: Dynamic inline mock wrapper for supervisorctl inside the clean Bash sequence
-  if ! /bin/bash -c "supervisorctl() { echo 'Muted Supervisor Hook'; }; export -f supervisorctl; cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
+  if ! su - frappe -c "supervisorctl() { echo 'Muted Supervisor Hook'; }; export -f supervisorctl; cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
       echo "❌ FATAL: Framework app injection sync failed."
       exit 1
   fi
   
-  /bin/bash -c "cd /home/frappe/frappe-bench && bench use \"$FRAPPE_SITE_NAME\""
+  su - frappe -c "cd /home/frappe/frappe-bench && bench use \"$FRAPPE_SITE_NAME\""
   echo "✅ Cluster schema sync complete!"
 else
-  echo "ℹ️ Existing cluster initialization detected. Skipping installation logic."
+  echo "ℹ️ Existing cluster initialization detected. Re-linking shared storage path..."
+  rm -rf /home/frappe/frappe-bench/sites
+  ln -s /storage/sites /home/frappe/frappe-bench/sites
+  chown -h frappe:frappe /home/frappe/frappe-bench/sites
 fi
 
-# Sync application maps across worker nodes
-mkdir -p /home/frappe/frappe-bench/sites
-echo "frappe" > /home/frappe/frappe-bench/sites/apps.txt
+# Sync application maps across cluster nodes
+echo "frappe" > /storage/sites/apps.txt
 if [ -f "/home/frappe/apps.txt" ]; then
-  cat /home/frappe/apps.txt >> /home/frappe/frappe-bench/sites/apps.txt
+  cat /home/frappe/apps.txt >> /storage/sites/apps.txt
 fi
-chown frappe:frappe /home/frappe/frappe-bench/sites/apps.txt 2>/dev/null || true
+chown frappe:frappe /storage/sites/apps.txt 2>/dev/null || true
 
 # Generate process manager properties configurations
 SUPERVISOR_CONFIG_FILE="/home/frappe/frappe-bench/config/supervisor.conf"
 rm -f "$SUPERVISOR_CONFIG_FILE"
-/bin/bash -c "cd /home/frappe/frappe-bench && bench setup supervisor --skip-redis"
+su - frappe -c "cd /home/frappe/frappe-bench && bench setup supervisor --skip-redis"
 
 # Adjust worker parameters for the unified image layout
 NEW_WEB_COMMAND="/home/frappe/.local/bin/bench serve --port ${FRAPPE_INTERNAL_PORT}"
