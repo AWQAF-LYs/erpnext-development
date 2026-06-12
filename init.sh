@@ -81,7 +81,7 @@ EOF
     su frappe -s /bin/bash << EOF
     export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
     cd /home/frappe/frappe-bench
-    bench set-mariadb-host erpdbcluster-cluster-0bxgsy_proxysql
+    bench set-mariadb-host tasks.erpdbcluster-cluster-0bxgsy_proxysql
     bench set-config -g redis_cache redis://redis-cache:6379
     bench set-config -g redis_queue redis://redis-queue:6379
     bench set-config -g redis_socketio redis://redis-cache:6379
@@ -119,7 +119,7 @@ EOF
         bench new-site ${FRAPPE_SITE_NAME} \
         --force \
         --mariadb-user-host-login-scope='%' \
-        --db-host=erpdbcluster-cluster-0bxgsy_proxysql \
+        --db-host=tasks.erpdbcluster-cluster-0bxgsy_proxysql \
         --db-port=6033 \
         --db-root-username=root \
         --db-root-password=${MYSQL_ROOT_PASSWORD:-Aa123123} \
