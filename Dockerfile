@@ -19,6 +19,9 @@ RUN pipx ensurepath && \
 # 3. Copy your init script in place:
 USER root
 COPY init.sh /usr/local/bin/init.sh
+# FIX: Automatically strip out potential hidden carriage returns that cause instant crashes
+RUN sed -i 's/\r$//' /usr/local/bin/init.sh
+RUN chmod +x /usr/local/bin/init.sh
 COPY apps.txt /home/frappe/apps.txt
 COPY backup.sh /home/frappe/backup.sh
 COPY restore.sh /home/frappe/restore.sh
