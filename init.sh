@@ -112,9 +112,9 @@ EOF
 EOF
   fi
 
-  echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
+echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
   
-  # Safe inline variable deployment protects against missing Dokploy parameters
+  # Base site creation command string
   SITE_SETUP_COMMANDS="cd /home/frappe/frappe-bench && \
     bench new-site ${FRAPPE_SITE_NAME} \
     --force \
@@ -125,15 +125,20 @@ EOF
     --db-root-password=${MYSQL_ROOT_PASSWORD:-root} \
     --admin-password=${RUN_TIME_ADMIN_PASS}"
 
-  if [ -n "$INSTALL_CMDS" ]; then
-    SITE_SETUP_COMMANDS="${SITE_SETUP_COMMANDS} && ${INSTALL_CMDS}"
+  # Clean trailing spaces/semicolons from the installation string to avoid broken chains
+  CLEAN_INSTALL_CMDS=$(echo "$INSTALL_CMDS" | sed 's/[[:space:];]*$//')
+
+  if [ -n "$CLEAN_INSTALL_CMDS" ]; then
+    SITE_SETUP_COMMANDS="${SITE_SETUP_COMMANDS} && ${CLEAN_INSTALL_CMDS}"
   fi
 
+  # Finalize environment states
   SITE_SETUP_COMMANDS="${SITE_SETUP_COMMANDS} && \
     bench --site ${FRAPPE_SITE_NAME} set-config developer_mode 1 && \
     bench --site ${FRAPPE_SITE_NAME} clear-cache && \
     bench use ${FRAPPE_SITE_NAME}"
 
+  # Safe injection execution
   export SITE_SETUP_COMMANDS
   su frappe -s /bin/bash -c 'export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:$PATH" && eval "$SITE_SETUP_COMMANDS"'
   
