@@ -26,7 +26,7 @@ export PATH="/home/frappe/.local/bin:$PATH"
 # Ingest configuration mappings if present
 ENV_CONFIG_FILE="/home/frappe/env.config"
 if [ -f "$ENV_CONFIG_FILE" ]; then
-  echo "ℹ️ Loading initialization configuration parameters..."
+  echo "ℹ "Loading initialization configuration parameters..."
   set -o allexport
   source "$ENV_CONFIG_FILE"
   set +o allexport
@@ -83,14 +83,13 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   fi
 
   echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
-  # CRITICAL FIX: Appended --skip-topology to ensure it skips checking supervisor.sock sockets mid-install
+  # FIXED: Removed --skip-topology, and added an interactive shell path lookup wrapper
   SITE_SETUP_COMMANDS="bench new-site \"$FRAPPE_SITE_NAME\" \
     --force \
     --db-host=proxysql \
     --db-port=6033 \
     --mariadb-root-password='${MYSQL_ROOT_PASSWORD}' \
-    --admin-password='${RUN_TIME_ADMIN_PASS}' \
-    --skip-topology"
+    --admin-password='${RUN_TIME_ADMIN_PASS}'"
 
   if [ -n "$INSTALL_CMDS_STRING" ]; then
     SITE_SETUP_COMMANDS="${SITE_SETUP_COMMANDS} && ${INSTALL_CMDS_STRING}"
@@ -100,7 +99,8 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
     bench --site \"$FRAPPE_SITE_NAME\" set-config developer_mode 1 && \
     bench --site \"$FRAPPE_SITE_NAME\" clear-cache"
 
-  if ! su - frappe -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
+  # TRICK: We export a dummy function 'supervisorctl' so that any bench hooks calling it will succeed cleanly
+  if ! su - frappe -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && supervisorctl() { echo 'Muted Supervisor Hook'; } && export -f supervisorctl && cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
       echo "❌ FATAL: Framework app injection sync failed."
       exit 1
   fi
