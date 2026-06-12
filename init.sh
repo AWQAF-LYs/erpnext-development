@@ -81,7 +81,7 @@ EOF
     su frappe -s /bin/bash << EOF
     export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
     cd /home/frappe/frappe-bench
-    bench set-mariadb-host proxysql
+    bench set-mariadb-host erpdbcluster-cluster-0bxgsy_proxysql
     bench set-config -g redis_cache redis://redis-cache:6379
     bench set-config -g redis_queue redis://redis-queue:6379
     bench set-config -g redis_socketio redis://redis-cache:6379
@@ -114,15 +114,15 @@ EOF
 
     echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
     
-    # Base site creation command string
+    # Base site creation command string pointed explicitly to your Swarm stack instance name
     SITE_SETUP_COMMANDS="cd /home/frappe/frappe-bench && \
         bench new-site ${FRAPPE_SITE_NAME} \
         --force \
         --mariadb-user-host-login-scope='%' \
-        --db-host=proxysql \
+        --db-host=erpdbcluster-cluster-0bxgsy_proxysql \
         --db-port=6033 \
         --db-root-username=root \
-        --db-root-password=${MYSQL_ROOT_PASSWORD:-root} \
+        --db-root-password=${MYSQL_ROOT_PASSWORD:-Aa123123} \
         --admin-password=${RUN_TIME_ADMIN_PASS}"
 
     # Clean trailing spaces/semicolons from the installation string to avoid broken chains
