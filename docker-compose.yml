@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # Split Redis nodes for enterprise queuing and locking safety
   redis-cache:
     image: redis:6.2-alpine
     networks:
@@ -23,7 +22,6 @@ services:
           - node.role == manager
 
   frappe:
-    # FIXED: Let Dokploy dynamically swap this with the actual built image tag automatically
     image: ${DOKPLOY_IMAGE:-erpdbcluster-erpnext-q4tegw:latest}
     user: root
     working_dir: /home/frappe
@@ -41,8 +39,8 @@ services:
       - S3_BACKUP_URL=${S3_BACKUP_URL:-}
       - SHELL=/bin/bash
     volumes:
-      # High-Availability GlusterFS mapping
-      - /mnt/shared-erp-data:/home/frappe
+      # FIXED: Changed destination path to prevent obliterating the container's native .pyenv system environment
+      - /mnt/shared-erp-data:/storage/sites
     ports: 
       - "${FRAPPE_HOST_PORT}:${FRAPPE_CONTAINER_PORT}"
       - "${SOCKETIO_HOST_PORT:-9000}:9000" 
@@ -50,7 +48,7 @@ services:
       - erpnext-network
     deploy:
       mode: replicated
-      replicas: 1 # Leave at 1 for the first deploy initialization, then bump to 3 later
+      replicas: 1 # Keep at 1 for initial seeding, then scale to 3!
       restart_policy:
         condition: on-failure
 
