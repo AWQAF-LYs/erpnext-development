@@ -26,7 +26,7 @@ export PATH="/home/frappe/.local/bin:$PATH"
 # Ingest configuration mappings if present
 ENV_CONFIG_FILE="/home/frappe/env.config"
 if [ -f "$ENV_CONFIG_FILE" ]; then
-  echo "ℹ Loading initialization configuration parameters..."
+  echo "ℹ️ Loading initialization configuration parameters..."
   set -o allexport
   source "$ENV_CONFIG_FILE"
   set +o allexport
@@ -45,14 +45,14 @@ chown -R frappe:frappe /home/frappe 2>/dev/null || echo "📁 Storage cluster pe
 if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   echo "🛠️ Creating structural bench base files..."
   
-  # Inject execution path variables directly into the login shell string safely
-  if ! su - frappe -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"; then
+  # Force explicit bash shell execution to prevent POSIX sh/dash mismatch errors
+  if ! su - frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"; then
       echo "❌ FATAL: Core framework initialization failed."
       exit 1
   fi
 
   echo "⚙️ Networking application layers into high-performance cluster configurations..."
-  su - frappe -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && cd /home/frappe/frappe-bench && \
+  su - frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && cd /home/frappe/frappe-bench && \
     bench set-mariadb-host proxysql && \
     bench set-config -g redis_cache 'redis://redis-cache:6379' && \
     bench set-config -g redis_queue 'redis://redis-queue:6379' && \
@@ -79,7 +79,7 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
 
   if [ -n "$FETCH_CMDS_STRING" ]; then
     echo "📦 Downloading linked app files..."
-    su - frappe -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && cd /home/frappe/frappe-bench && $FETCH_CMDS_STRING"
+    su - frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && cd /home/frappe/frappe-bench && $FETCH_CMDS_STRING"
   fi
 
   echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
@@ -98,13 +98,13 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
     bench --site \"$FRAPPE_SITE_NAME\" set-config developer_mode 1 && \
     bench --site \"$FRAPPE_SITE_NAME\" clear-cache"
 
-  # We export a dummy function 'supervisorctl' so that any bench hooks calling it will succeed cleanly
-  if ! su - frappe -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && supervisorctl() { echo 'Muted Supervisor Hook'; } && export -f supervisorctl && cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
+  # FIXED: Wrapped supervisorctl as an inline dynamic function alias WITHOUT using the buggy export -f flag.
+  if ! su - frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && supervisorctl() { echo 'Muted Supervisor Hook'; } && cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
       echo "❌ FATAL: Framework app injection sync failed."
       exit 1
   fi
   
-  su - frappe -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && cd /home/frappe/frappe-bench && bench use \"$FRAPPE_SITE_NAME\""
+  su - frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && cd /home/frappe/frappe-bench && bench use \"$FRAPPE_SITE_NAME\""
   echo "✅ Cluster schema sync complete!"
 else
   echo "ℹ️ Existing cluster initialization detected. Skipping installation logic."
@@ -121,7 +121,7 @@ chown frappe:frappe /home/frappe/frappe-bench/sites/apps.txt 2>/dev/null || true
 # Generate process manager properties configurations
 SUPERVISOR_CONFIG_FILE="/home/frappe/frappe-bench/config/supervisor.conf"
 rm -f "$SUPERVISOR_CONFIG_FILE"
-su - frappe -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && cd /home/frappe/frappe-bench && bench setup supervisor --skip-redis"
+su - frappe -s /bin/bash -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && cd /home/frappe/frappe-bench && bench setup supervisor --skip-redis"
 
 # Adjust worker parameters for the unified image layout
 NEW_WEB_COMMAND="/home/frappe/.local/bin/bench serve --port ${FRAPPE_INTERNAL_PORT}"
