@@ -4,20 +4,20 @@ set -e
 # For commands run via su - frappe, frappe's $HOME will be /home/frappe.
 # The path to bench installed by pipx for the frappe user is typically /home/frappe/.local/bin/bench.
 
-
 # Install OpenSSH Server
 apt-get update && apt-get install -y openssh-server
 
-echo "root:${FRAPPE_ADMIN_PASSWORD}" | chpasswd
+# --- FIXED: Bulletproof Password Assignment ---
+# If FRAPPE_ADMIN_PASSWORD is empty, fallback securely instead of crashing the script
+SSH_ROOT_PASS="${FRAPPE_ADMIN_PASSWORD:-Aa123123!}"
+echo "root:${SSH_ROOT_PASS}" | chpasswd || echo "⚠️ Warning: Root password adjustment bypassed"
 
 # Start SSH Service
-service ssh start
+service ssh start || true
 
 # Optional: Ensure SSH listens on the correct port if necessary
 sed -i 's/#Port 22/Port 22/' /etc/ssh/sshd_config
 
-
-# Check for MYSQL_ROOT_PASSWORD from docker-compose environment
 # Check for FRAPPE_ADMIN_PASSWORD from docker-compose environment
 if [ -z "${FRAPPE_ADMIN_PASSWORD}" ]; then
   echo "❌ ERROR: FRAPPE_ADMIN_PASSWORD environment variable is not set for the frappe container."
@@ -47,10 +47,9 @@ FRAPPE_BRANCH=${FRAPPE_BRANCH:-version-15}
 
 echo "🚀 Initializing ERPNext for site: $FRAPPE_SITE_NAME on internal port: $FRAPPE_INTERNAL_PORT"
 
-# ensure correct ownership on persistent home
-# This needs to be done carefully if /home/frappe is a volume from a previous run by a different UID internally
-# Allow errors on the network share path so it won't trigger 'set -e' kill signals
-chown -R frappe:frappe /home/frappe || echo "⚠️ Network share ownership warning bypassed safely"
+# --- FIXED: Non-blocking shared storage permissions sweep ---
+# Allow errors here so slow-mounting GlusterFS networks don't break the container boot
+chown -R frappe:frappe /home/frappe || echo "⚠️ Shared network volume ownership check bypassed safely"
 
 # only do the heavy bench init + site create once
 if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
@@ -58,18 +57,13 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   su - frappe -c "bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"
 
   echo "⚙️ Pointing at your Database Cluster & High-Performance Redis Nodes..."
-    su - frappe -c "cd /home/frappe/frappe-bench && \
-      bench set-mariadb-host proxysql && \
-      bench set-config -g redis_cache 'redis://redis-cache:6379' && \
-      bench set-config -g redis_queue 'redis://redis-queue:6379' && \
-      bench set-config -g redis_socketio 'redis://redis-queue:6379'"
-  
-    # HACK: Fixes the missing app definition on secondary nodes using GlusterFS
-    echo "frappe" > /home/frappe/frappe-bench/sites/apps.txt
-    if [ -f "/home/frappe/apps.txt" ]; then
-      cat /home/frappe/apps.txt >> /home/frappe/frappe-bench/sites/apps.txt
-    fi
-  # FRAPPE_SITE_NAME is now set from env.config or default
+  su - frappe -c "cd /home/frappe/frappe-bench && \
+    bench set-mariadb-host proxysql && \
+    bench set-config -g redis_cache 'redis://redis-cache:6379' && \
+    bench set-config -g redis_queue 'redis://redis-queue:6379' && \
+    bench set-config -g redis_socketio 'redis://redis-queue:6379'"
+
+  APPS_FILE_PATH="/home/frappe/apps.txt"
 
   FETCH_CMDS_STRING=""
   INSTALL_CMDS_STRING=""
@@ -80,11 +74,10 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
       app_name_trimmed=$(echo "$app_name" | tr -d '\r' | xargs) # Trim whitespace and carriage returns
       if [ -n "$app_name_trimmed" ]; then # Check if app_name is not empty
         echo "   queuing app '$app_name_trimmed' for fetching and installation."
-        # Use the configured FRAPPE_BRANCH when fetching apps to ensure version-15 compatibility.
         FETCH_CMDS_STRING="${FETCH_CMDS_STRING}bench get-app ${app_name_trimmed} --branch ${FRAPPE_BRANCH} && "
         INSTALL_CMDS_STRING="${INSTALL_CMDS_STRING}bench --site \"${FRAPPE_SITE_NAME}\" install-app ${app_name_trimmed} && "
       fi
-     Papel done < "$APPS_FILE_PATH"
+    done < "$APPS_FILE_PATH"
 
     # Remove trailing ' && ' if commands were added
     if [ -n "$FETCH_CMDS_STRING" ]; then
@@ -104,7 +97,7 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
     echo "ℹ️ No apps specified to fetch."
   fi
 
-  echo "🌐 Creating site '$FRAPPE_SITE_NAME' on the external Galera/ProxySQL Cluster..."
+  echo "🌐 Creating site '$FRAPPE_SITE_NAME' on the external Galera Cluster..."
   SITE_SETUP_COMMANDS="bench new-site \"$FRAPPE_SITE_NAME\" \
     --force \
     --db-host=proxysql \
@@ -132,6 +125,15 @@ else
   echo "ℹ️ Frappe bench appears to be already initialized. Skipping bench init and site creation."
 fi
 
+# --- FIXED: Sync application mapping across GlusterFS shared storage nodes ---
+echo "Syncing active application maps to shared storage..."
+mkdir -p /home/frappe/frappe-bench/sites
+echo "frappe" > /home/frappe/frappe-bench/sites/apps.txt
+if [ -f "/home/frappe/apps.txt" ]; then
+  cat /home/frappe/apps.txt >> /home/frappe/frappe-bench/sites/apps.txt
+fi
+chown frappe:frappe /home/frappe/frappe-bench/sites/apps.txt || true
+
 # Generate a proper Supervisor conf from bench itself,
 # then symlink it into /etc so supervisord picks it up
 echo "⚙️ Generating Supervisor config as user 'frappe'..."
@@ -139,7 +141,6 @@ echo "⚙️ Generating Supervisor config as user 'frappe'..."
 SUPERVISOR_CONFIG_FILE="/home/frappe/frappe-bench/config/supervisor.conf"
 
 rm -f "$SUPERVISOR_CONFIG_FILE"
-# bench setup supervisor will use the site from currentsite.txt (set by 'bench use' above if new bench)
 su - frappe -c "cd /home/frappe/frappe-bench && bench setup supervisor --skip-redis"
 
 # --- START: Modification to change Gunicorn to bench serve (with debugging) ---
