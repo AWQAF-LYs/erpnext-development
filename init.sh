@@ -49,8 +49,8 @@ echo "🚀 Initializing ERPNext for site: $FRAPPE_SITE_NAME on internal port: $F
 
 # ensure correct ownership on persistent home
 # This needs to be done carefully if /home/frappe is a volume from a previous run by a different UID internally
-# However, bench init will also chown within frappe-bench
-chown -R frappe:frappe /home/frappe
+# Allow errors on the network share path so it won't trigger 'set -e' kill signals
+chown -R frappe:frappe /home/frappe || echo "⚠️ Network share ownership warning bypassed safely"
 
 # only do the heavy bench init + site create once
 if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
