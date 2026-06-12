@@ -119,6 +119,8 @@ EOF
     SITE_SETUP_COMMANDS="cd /home/frappe/frappe-bench && \
         bench new-site ${FRAPPE_SITE_NAME} \
         --force \
+        --db-name=frappe_production \
+        --db-user=frappe_user \
         --mariadb-user-host-login-scope='%' \
         --db-host=erpdbcluster-cluster-0bxgsy_galera-node1 \
         --db-port=3306 \
