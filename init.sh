@@ -26,7 +26,7 @@ export PATH="/home/frappe/.local/bin:$PATH"
 # Ingest configuration mappings if present
 ENV_CONFIG_FILE="/home/frappe/env.config"
 if [ -f "$ENV_CONFIG_FILE" ]; then
-  echo "ℹ "Loading initialization configuration parameters..."
+  echo "ℹ Loading initialization configuration parameters..."
   set -o allexport
   source "$ENV_CONFIG_FILE"
   set +o allexport
@@ -83,7 +83,6 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   fi
 
   echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
-  # FIXED: Removed --skip-topology, and added an interactive shell path lookup wrapper
   SITE_SETUP_COMMANDS="bench new-site \"$FRAPPE_SITE_NAME\" \
     --force \
     --db-host=proxysql \
@@ -99,7 +98,7 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
     bench --site \"$FRAPPE_SITE_NAME\" set-config developer_mode 1 && \
     bench --site \"$FRAPPE_SITE_NAME\" clear-cache"
 
-  # TRICK: We export a dummy function 'supervisorctl' so that any bench hooks calling it will succeed cleanly
+  # We export a dummy function 'supervisorctl' so that any bench hooks calling it will succeed cleanly
   if ! su - frappe -c "export PATH=\"/home/frappe/.local/bin:\$PATH\" && supervisorctl() { echo 'Muted Supervisor Hook'; } && export -f supervisorctl && cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
       echo "❌ FATAL: Framework app injection sync failed."
       exit 1
