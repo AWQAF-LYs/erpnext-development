@@ -21,8 +21,10 @@ if [ -f "/etc/ssh/sshd_config" ]; then
 fi
 safe_run service ssh start 2>/dev/null || true
 
-# Explicitly set the path variables for root and the subsequent user spaces
-export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/bin:$PATH"
+# CRITICAL: Define absolute paths explicitly for the execution runner environment
+export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export HOME="/home/frappe"
+export USER="frappe"
 
 # Ingest configuration mappings if present
 ENV_CONFIG_FILE="/home/frappe/env.config"
@@ -46,14 +48,14 @@ chown -R frappe:frappe /home/frappe 2>/dev/null || echo "📁 Storage cluster pe
 if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   echo "🛠️ Creating structural bench base files..."
   
-  # FIXED: Removed 'su -' login flag to bypass broken profile tracking scripts
-  if ! su frappe -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/bin:\$PATH\" && bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"; then
+  # FIXED: Swapped 'su' out for a direct binary bash call execution profile
+  if ! /bin/bash -c "bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"; then
       echo "❌ FATAL: Core framework initialization failed."
       exit 1
   fi
 
   echo "⚙️ Networking application layers into high-performance cluster configurations..."
-  su frappe -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/bin:\$PATH\" && cd /home/frappe/frappe-bench && \
+  /bin/bash -c "cd /home/frappe/frappe-bench && \
     bench set-mariadb-host proxysql && \
     bench set-config -g redis_cache 'redis://redis-cache:6379' && \
     bench set-config -g redis_queue 'redis://redis-queue:6379' && \
@@ -80,7 +82,7 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
 
   if [ -n "$FETCH_CMDS_STRING" ]; then
     echo "📦 Downloading linked app files..."
-    su frappe -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/bin:\$PATH\" && cd /home/frappe/frappe-bench && $FETCH_CMDS_STRING"
+    /bin/bash -c "cd /home/frappe/frappe-bench && $FETCH_CMDS_STRING"
   fi
 
   echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
@@ -99,13 +101,13 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
     bench --site \"$FRAPPE_SITE_NAME\" set-config developer_mode 1 && \
     bench --site \"$FRAPPE_SITE_NAME\" clear-cache"
 
-  # Mute the supervisorctl execution triggers safely
-  if ! su frappe -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/bin:\$PATH\" && supervisorctl() { echo 'Muted Supervisor Hook'; } && cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
+  # FIXED: Dynamic inline mock wrapper for supervisorctl inside the clean Bash sequence
+  if ! /bin/bash -c "supervisorctl() { echo 'Muted Supervisor Hook'; }; export -f supervisorctl; cd /home/frappe/frappe-bench && $SITE_SETUP_COMMANDS"; then
       echo "❌ FATAL: Framework app injection sync failed."
       exit 1
   fi
   
-  su frappe -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/bin:\$PATH\" && cd /home/frappe/frappe-bench && bench use \"$FRAPPE_SITE_NAME\""
+  /bin/bash -c "cd /home/frappe/frappe-bench && bench use \"$FRAPPE_SITE_NAME\""
   echo "✅ Cluster schema sync complete!"
 else
   echo "ℹ️ Existing cluster initialization detected. Skipping installation logic."
@@ -122,7 +124,7 @@ chown frappe:frappe /home/frappe/frappe-bench/sites/apps.txt 2>/dev/null || true
 # Generate process manager properties configurations
 SUPERVISOR_CONFIG_FILE="/home/frappe/frappe-bench/config/supervisor.conf"
 rm -f "$SUPERVISOR_CONFIG_FILE"
-su frappe -c "export PATH=\"/home/frappe/.local/bin:/home/frappe/.pyenv/bin:\$PATH\" && cd /home/frappe/frappe-bench && bench setup supervisor --skip-redis"
+/bin/bash -c "cd /home/frappe/frappe-bench && bench setup supervisor --skip-redis"
 
 # Adjust worker parameters for the unified image layout
 NEW_WEB_COMMAND="/home/frappe/.local/bin/bench serve --port ${FRAPPE_INTERNAL_PORT}"
