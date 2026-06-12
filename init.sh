@@ -81,7 +81,8 @@ EOF
     su frappe -s /bin/bash << EOF
     export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
     cd /home/frappe/frappe-bench
-    bench set-mariadb-host tasks.erpdbcluster-cluster-0bxgsy_proxysql
+    # Bypassing overlay DNS by using the Docker bridge host gateway to hit ProxySQL's published port
+    bench set-mariadb-host 172.17.0.1
     bench set-config -g redis_cache redis://redis-cache:6379
     bench set-config -g redis_queue redis://redis-queue:6379
     bench set-config -g redis_socketio redis://redis-cache:6379
@@ -114,12 +115,12 @@ EOF
 
     echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
     
-    # Base site creation command string pointed explicitly to your Swarm stack instance name
+    # Base site creation command string pointing directly to the network gateway routing loop
     SITE_SETUP_COMMANDS="cd /home/frappe/frappe-bench && \
         bench new-site ${FRAPPE_SITE_NAME} \
         --force \
         --mariadb-user-host-login-scope='%' \
-        --db-host=tasks.erpdbcluster-cluster-0bxgsy_proxysql \
+        --db-host=172.17.0.1 \
         --db-port=6033 \
         --db-root-username=root \
         --db-root-password=${MYSQL_ROOT_PASSWORD:-Aa123123} \
