@@ -23,7 +23,8 @@ services:
           - node.role == manager
 
   frappe:
-    image: frappe-custom:latest 
+    # FIXED: Let Dokploy dynamically swap this with the actual built image tag automatically
+    image: ${DOKPLOY_IMAGE:-erpdbcluster-erpnext-q4tegw:latest}
     user: root
     working_dir: /home/frappe
     env_file:
@@ -34,15 +35,13 @@ services:
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?Required}
       - FRAPPE_ADMIN_PASSWORD=${FRAPPE_ADMIN_PASSWORD:?Required}
       - FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:?Required}
-      # FIXED: Added safe fallbacks so empty strings in .env don't break Swarm interpolation
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
       - S3_BACKUP_URL=${S3_BACKUP_URL:-}
       - SHELL=/bin/bash
     volumes:
-      # FIXED: Mount the parent directory. This allows bench init to run 
-      # cleanly without hitting directory conflict issues.
+      # High-Availability GlusterFS mapping
       - /mnt/shared-erp-data:/home/frappe
     ports: 
       - "${FRAPPE_HOST_PORT}:${FRAPPE_CONTAINER_PORT}"
@@ -51,9 +50,7 @@ services:
       - erpnext-network
     deploy:
       mode: replicated
-      # TIP: Keep this at 1 for the very first initialization, 
-      # then scale up to 3 once the database is fully seeded!
-      replicas: 1
+      replicas: 1 # Leave at 1 for the first deploy initialization, then bump to 3 later
       restart_policy:
         condition: on-failure
 
