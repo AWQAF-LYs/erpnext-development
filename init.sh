@@ -12,12 +12,10 @@ safe_run() {
 
 echo "🏁 Container execution engine running..."
 
-# Export variables globally so they are readable by the isolated frappe subshells
-export FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:-"erp.local"}
-export FRAPPE_INTERNAL_PORT=${FRAPPE_INTERNAL_PORT:-8000} 
-export FRAPPE_BRANCH=${FRAPPE_BRANCH:-"version-15"}
-export RUN_TIME_ADMIN_PASS="${FRAPPE_ADMIN_PASSWORD:-admin123123}"
-export MYSQL_ROOT_PASSWORD
+FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:-"erp.local"}
+FRAPPE_INTERNAL_PORT=${FRAPPE_INTERNAL_PORT:-8000} 
+FRAPPE_BRANCH=${FRAPPE_BRANCH:-"version-15"}
+RUN_TIME_ADMIN_PASS="${FRAPPE_ADMIN_PASSWORD:-admin123123}"
 
 # Configure background secure access points safely
 if [ -f "/etc/ssh/sshd_config" ]; then
@@ -55,11 +53,12 @@ chown -R frappe:frappe /storage/sites
 if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   echo "🛠️ Creating structural bench base files inside high-performance layer..."
   
-  # Initialize the core bench using clean shell execution settings
-  if ! su frappe -s /bin/bash -c 'export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:$PATH" && /bin/bash --noprofile --norc -c "bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench"'; then
-      echo "❌ FATAL: Core framework initialization failed."
-      exit 1
-  fi
+  # Using a direct Heredoc to pass execution to the frappe user seamlessly
+  su frappe -s /bin/bash << EOF
+  export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
+  bench init --frappe-branch ${FRAPPE_BRANCH} --skip-redis-config-generation /home/frappe/frappe-bench
+EOF
+  if [ $? -ne 0 ]; then echo "❌ FATAL: Core framework initialization failed."; exit 1; fi
 
   echo "🔗 Linking bench sites array directly to High-Availability Storage Volume..."
   if [ -z "$(ls -A /storage/sites)" ]; then
@@ -68,58 +67,129 @@ if [ ! -d "/home/frappe/frappe-bench/apps/frappe" ]; then
   rm -rf /home/frappe/frappe-bench/sites
   ln -s /storage/sites /home/frappe/frappe-bench/sites
   
-  # CRITICAL PERMISSIONS STEP: Remap ownership immediately after the template files are copied
+  # Remap ownership immediately after the template files are copied
   chmod -R 777 /storage/sites
   chown -R frappe:frappe /storage/sites
   chown -R frappe:frappe /home/frappe
   chown -h frappe:frappe /home/frappe/frappe-bench/sites
 
   echo "⚙️ Networking application layers into cluster configurations..."
-  su frappe -s /bin/bash -c 'export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:$PATH" && cd /home/frappe/frappe-bench && /bin/bash --noprofile --norc -c "bench set-mariadb-host proxysql && bench set-config -g redis_cache redis://redis-cache:6379 && bench set-config -g redis_queue redis://redis-queue:6379 && bench set-config -g redis_socketio redis://redis-cache:6379"'
+  su frappe -s /bin/bash << EOF
+  export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
+  cd /home/frappe/frappe-bench
+  bench set-mariadb-host proxysql
+  bench set-config -g redis_cache redis://redis-cache:6379
+  bench set-config -g redis_queue redis://redis-queue:6379
+  bench set-config -g redis_socketio redis://redis-cache:6379
+EOF
 
   # Parse custom applications array list
   APPS_FILE_PATH="/home/frappe/apps.txt"
-  FETCH_CMDS_STRING=""
-  INSTALL_CMDS_STRING=""
+  FETCH_CMDS=""
+  INSTALL_CMDS=""
 
   if [ -f "$APPS_FILE_PATH" ]; then
     while IFS= read -r app_name || [ -n "$app_name" ]; do
       app_name_trimmed=$(echo "$app_name" | tr -d '\r' | xargs)
       if [ -n "$app_name_trimmed" ]; then
         echo "   -> Queuing custom module app setup: $app_name_trimmed"
-        FETCH_CMDS_STRING="${FETCH_CMDS_STRING}bench get-app ${app_name_trimmed} --branch ${FRAPPE_BRANCH} && "
-        INSTALL_CMDS_STRING="${INSTALL_CMDS_STRING}bench --site \$FRAPPE_SITE_NAME install-app ${app_name_trimmed} && "
+        FETCH_CMDS="${FETCH_CMDS}bench get-app ${app_name_trimmed} --branch ${FRAPPE_BRANCH}; "
+        INSTALL_CMDS="${INSTALL_CMDS}bench --site ${FRAPPE_SITE_NAME} install-app ${app_name_trimmed}; "
       fi
     done < "$APPS_FILE_PATH"
-
-    if [ -n "$FETCH_CMDS_STRING" ]; then FETCH_CMDS_STRING=${FETCH_CMDS_STRING%% && }; fi
-    if [ -n "$INSTALL_CMDS_STRING" ]; then INSTALL_CMDS_STRING=${INSTALL_CMDS_STRING%% && }; fi
   fi
 
-  if [ -n "$FETCH_CMDS_STRING" ]; then
+  if [ -n "$FETCH_CMDS" ]; then
     echo "📦 Downloading linked app files..."
-    export FETCH_CMDS_STRING
-    su frappe -s /bin/bash -c 'export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:$PATH" && cd /home/frappe/frappe-bench && /bin/bash --noprofile --norc -c "$FETCH_CMDS_STRING"'
+    su frappe -s /bin/bash << EOF
+    export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
+    cd /home/frappe/frappe-bench
+    $FETCH_CMDS
+EOF
   fi
 
   echo "🌐 Syncing database schema changes via ProxySQL multi-master cluster..."
-  # CRITICAL FIX: Swapped --mariadb-root-password out for the modern standard --db-root-password flag
-  SITE_SETUP_COMMANDS="bench new-site \$FRAPPE_SITE_NAME \
+  su frappe -s /bin/bash << EOF
+  export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
+  cd /home/frappe/frappe-bench
+
+  bench new-site "${FRAPPE_SITE_NAME}" \
     --force \
     --no-mariadb-socket \
     --db-host=proxysql \
     --db-port=6033 \
     --db-root-username=root \
-    --db-root-password=\$MYSQL_ROOT_PASSWORD \
-    --admin-password=\$RUN_TIME_ADMIN_PASS"
+    --db-root-password="${MYSQL_ROOT_PASSWORD}" \
+    --admin-password="${RUN_TIME_ADMIN_PASS}"
 
-  if [ -n "$INSTALL_CMDS_STRING" ]; then
-    SITE_SETUP_COMMANDS="${SITE_SETUP_COMMANDS} && ${INSTALL_CMDS_STRING}"
+  $INSTALL_CMDS
+
+  bench --site "${FRAPPE_SITE_NAME}" set-config developer_mode 1
+  bench --site "${FRAPPE_SITE_NAME}" clear-cache
+  bench use "${FRAPPE_SITE_NAME}"
+EOF
+  if [ $? -ne 0 ]; then
+      echo "❌ FATAL: Framework app injection sync failed."
+      exit 1
   fi
+  
+  echo "✅ Cluster schema sync complete!"
+else
+  echo "ℹ️ Existing cluster initialization detected. Re-linking shared storage path..."
+  rm -rf /home/frappe/frappe-bench/sites
+  ln -s /storage/sites /home/frappe/frappe-bench/sites
+  chmod -R 777 /storage/sites
+  chown -R frappe:frappe /storage/sites
+  chown -R frappe:frappe /home/frappe
+  chown -h frappe:frappe /home/frappe/frappe-bench/sites
+fi
 
-  SITE_SETUP_COMMANDS="${SITE_SETUP_COMMANDS} && \
-    bench --site \$FRAPPE_SITE_NAME set-config developer_mode 1 && \
-    bench --site \$FRAPPE_SITE_NAME clear-cache"
+# Sync application maps across cluster nodes
+echo "frappe" > /storage/sites/apps.txt
+if [ -f "/home/frappe/apps.txt" ]; then
+  cat /home/frappe/apps.txt >> /storage/sites/apps.txt
+fi
+chmod 777 /storage/sites/apps.txt
+chown frappe:frappe /storage/sites/apps.txt 2>/dev/null || true
 
-  export SITE_SETUP_COMMANDS
-  if ! su frappe -s /bin/bash -c 'export PATH="/home/frappe/.local
+# Generate process manager properties configurations
+SUPERVISOR_CONFIG_FILE="/home/frappe/frappe-bench/config/supervisor.conf"
+rm -f "$SUPERVISOR_CONFIG_FILE"
+su frappe -s /bin/bash << EOF
+export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
+cd /home/frappe/frappe-bench
+bench setup supervisor --skip-redis
+EOF
+
+# Adjust worker parameters for the unified image layout
+NEW_WEB_COMMAND="/home/frappe/.local/bin/bench serve --port ${FRAPPE_INTERNAL_PORT}"
+NEW_WEB_DIRECTORY="/home/frappe/frappe-bench"
+TEMP_AWK_OUTPUT_FILE="${SUPERVISOR_CONFIG_FILE}.tmp"
+
+if [ -f "$SUPERVISOR_CONFIG_FILE" ]; then
+    awk -v cmd="$NEW_WEB_COMMAND" -v dir="$NEW_WEB_DIRECTORY" '
+    BEGIN { state = 0; }
+    /\[program:frappe-bench-frappe-web\]/ { state = 1; print $0; next; }
+    (state == 1 && $0 ~ /^[[:space:]]*\[program:/ && $0 !~ /\[program:frappe-bench-frappe-web\]/) { state = 0; }
+    (state == 1) {
+        if ($0 ~ /^command=/) { print "command=" cmd; next; }
+        if ($0 ~ /^directory=/) { print "directory=" dir; next; }
+        if ($0 ~ /gunicorn/ || $0 ~ /frappe\.app:application/) {
+            print "# Overridden: " $0; next;
+        }
+    }
+    { print $0; }
+    ' "$SUPERVISOR_CONFIG_FILE" > "$TEMP_AWK_OUTPUT_FILE"
+    
+    mv "$TEMP_AWK_OUTPUT_FILE" "$SUPERVISOR_CONFIG_FILE"
+    chown frappe:frappe "$SUPERVISOR_CONFIG_FILE"
+fi
+
+# Clean up our temporary mock script binary before passing execution over to the live orchestrator
+rm -f /home/frappe/.local/bin/supervisorctl
+
+mkdir -p /etc/supervisor/conf.d/
+ln -sf "$SUPERVISOR_CONFIG_FILE" /etc/supervisor/conf.d/frappe-bench.conf
+
+echo "✅ Transferring master process orchestration over to Supervisord..."
+exec /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf
