@@ -12,6 +12,12 @@ safe_run() {
 
 echo "🏁 Container execution engine running..."
 
+if [ -n "$IS_BUILDING_IMAGE" ] || [ "$1" = "--build-only" ]; then
+    echo "⏩ Dokploy Image Build Phase detected. Bypassing database hooks cleanly..."
+    echo "✅ Build step complete. Runtime scripts will execute upon container startup."
+    exit 0
+fi
+
 FRAPPE_SITE_NAME=${FRAPPE_SITE_NAME:-"erp.local"}
 FRAPPE_INTERNAL_PORT=${FRAPPE_INTERNAL_PORT:-8000}
 FRAPPE_BRANCH=${FRAPPE_BRANCH:-"version-15"}
@@ -40,26 +46,22 @@ fi
 echo "🚀 Site Configuration Target: $FRAPPE_SITE_NAME on Port: $FRAPPE_INTERNAL_PORT"
 
 # ---------------------------------------------------------------------------
-# CLUSTER IDENTITY VARIABLES & DOCKER BRIDGE ROUTING OVERRIDES
+# CLUSTER IDENTITY VARIABLES & ROUTING PROFILES
 # ---------------------------------------------------------------------------
-BUILD_ROUTING_GATEWAY="172.17.0.1"
+SWARM_OVERLAY_HOST="erpdbcluster-cluster-0bxgsy_galera-node1"
 
-# Build phase connections use host mesh routing to escape Dokploy isolation
-GALERA_HOST="${BUILD_ROUTING_GATEWAY}"
+GALERA_HOST="${SWARM_OVERLAY_HOST}"
 GALERA_PORT="${GALERA_NODE1_PORT:-3306}"
 GALERA_ROOT_PASS="${MYSQL_ROOT_PASSWORD:-Aa123123}"
 
-# Runtime connections use the internal Swarm overlay names
 PROXYSQL_RUNTIME_HOST="${PROXYSQL_SERVICE_HOST:-erpdbcluster-cluster-0bxgsy_proxysql}"
 PROXYSQL_RUNTIME_PORT="6033"
 
-# ProxySQL admin interface targeted via host gateway port mapping
-PROXYSQL_ADMIN_HOST="${BUILD_ROUTING_GATEWAY}"
-PROXYSQL_ADMIN_PORT="6032"
+PROXYSQL_ADMIN_HOST="erpdbcluster-cluster-0bxgsy_proxysql"
+PROXYSQL_ADMIN_PORT=6032
 PROXYSQL_ADMIN_USER="${PROXYSQL_ADMIN_USER:-admin}"
 PROXYSQL_ADMIN_PASS="${PROXYSQL_ADMIN_PASS:-admin}"
 
-# Database parameters
 DB_NAME="${FRAPPE_DB_NAME:-frappe_production}"
 DB_USER="${FRAPPE_DB_USER:-frappe_user}"
 DB_PASS="${FRAPPE_DB_PASSWORD:-Aa123123}"
@@ -102,15 +104,11 @@ EOF
     chown -R frappe:frappe /home/frappe
     chown -h frappe:frappe /home/frappe/frappe-bench/sites
 
-    echo "⚙️ Networking application layers into cluster configurations..."
-    su frappe -s /bin/bash << EOF
-export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
-cd /home/frappe/frappe-bench
-bench set-mariadb-host ${PROXYSQL_RUNTIME_HOST}
-bench set-config -g redis_cache redis://redis-cache:6379
-bench set-config -g redis_queue redis://redis-queue:6379
-bench set-config -g redis_socketio redis://redis-cache:6379
-EOF
+    # ===========================================================================
+    # ADJUSTMENT: TIMING CORRECTION
+    # Postponed global bench redis networking configs, common_site_config 
+    # db_host adjustments moved downstream to avoid hijacking site generation.
+    # ===========================================================================
 
     # Parse custom applications array list
     APPS_FILE_PATH="/home/frappe/apps.txt"
@@ -138,86 +136,92 @@ EOF
     fi
 
     # ===========================================================================
-    # FIX 1: GALERA READINESS WAIT (Routed via Host Bridge Gateway)
+    # FIX A.1: GALERA READINESS LOOP VIA PYMYSQL INSTEAD OF MYSQL CLI
     # ===========================================================================
-    echo "⏳ Waiting for Galera node1 via Host Bridge Mesh (${GALERA_HOST}:${GALERA_PORT})..."
+    echo "⏳ Waiting for Galera database engine via PyMySQL (${GALERA_HOST}:${GALERA_PORT})..."
     MAX_TRIES=60
     TRIES=0
-    until mysql -h "${GALERA_HOST}" -P "${GALERA_PORT}" \
-          -u root -p"${GALERA_ROOT_PASS}" \
-          --connect-timeout=3 \
-          -e "SELECT 1;" > /dev/null 2>&1; do
+    while true; do
+        python3 -c "
+import pymysql, sys
+try:
+    conn = pymysql.connect(host='${GALERA_HOST}', port=${GALERA_PORT}, user='root', password='${GALERA_ROOT_PASS}', connect_timeout=3)
+    conn.close()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+"
+        if [ $? -eq 0 ]; then
+            echo "✅ Connected to Galera Active Cluster Mesh!"
+            break
+        fi
+
         TRIES=$((TRIES + 1))
         if [ "$TRIES" -ge "$MAX_TRIES" ]; then
-            echo "❌ FATAL: Galera node1 did not become available via host mesh after $((MAX_TRIES * 5))s."
+            echo "❌ FATAL: Galera node did not become available at runtime initialization via PyMySQL."
             exit 1
         fi
         echo "   Galera not ready (attempt ${TRIES}/${MAX_TRIES}), retrying in 5s..."
         sleep 5
     done
-    echo "✅ Galera host connection interface verified."
 
     # ===========================================================================
-    # FIX 2: PRE-PROVISION IDEMPOTENT DATABASE & GLOBAL USER CLEARANCES
+    # FIX A.2: IDEMPOTENT DB & ROOT PROVISIONING VIA PYMYSQL INSTEAD OF MYSQL CLI
     # ===========================================================================
-    echo "🔐 Pre-provisioning database schema and access credentials on Galera..."
-    mysql -h "${GALERA_HOST}" -P "${GALERA_PORT}" \
-          -u root -p"${GALERA_ROOT_PASS}" <<SQLEOF
-CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
+    echo "🔐 Pre-provisioning database schema and access credentials via PyMySQL..."
+    python3 - << PYEOF
+import pymysql, sys
+try:
+    conn = pymysql.connect(host='${GALERA_HOST}', port=${GALERA_PORT}, user='root', password='${GALERA_ROOT_PASS}')
+    with conn.cursor() as cur:
+        cur.execute("CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
+        cur.execute("CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '${GALERA_ROOT_PASS}';")
+        cur.execute("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;")
+        cur.execute("ALTER USER 'root'@'%' IDENTIFIED BY '${GALERA_ROOT_PASS}';")
+        cur.execute("CREATE USER IF NOT EXISTS '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';")
+        cur.execute("ALTER USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';")
+        cur.execute("GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'%';")
+        cur.execute("GRANT ALL PRIVILEGES ON \`_${DB_NAME}%\`.* TO '${DB_USER}'@'%';")
+        cur.execute("FLUSH PRIVILEGES;")
+    conn.commit()
+    conn.close()
+    print("✅ Database and credentials pre-provisioning complete.")
+except Exception as e:
+    print(f"❌ FATAL: Database provisioning failed: {e}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
 
-CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '${GALERA_ROOT_PASS}';
-GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
-ALTER USER 'root'@'%' IDENTIFIED BY '${GALERA_ROOT_PASS}';
+    if [ $? -ne 0 ]; then exit 1; fi
 
-CREATE USER IF NOT EXISTS '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';
-ALTER USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';
-GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'%';
-GRANT ALL PRIVILEGES ON \`_${DB_NAME}%\`.* TO '${DB_USER}'@'%';
-
-FLUSH PRIVILEGES;
-SQLEOF
-
-    if [ $? -ne 0 ]; then
-        echo "❌ FATAL: Database pre-provisioning failed. Cannot continue."
-        exit 1
-    fi
-    echo "✅ Database and credentials pre-provisioning complete."
-
-    echo "⏳ Holding 8s for Galera DDL replication across cluster..."
-    sleep 8
-
-    # ===========================================================================
-    # FIX 3: REGISTER INTERNALS INTO PROXYSQL CORE VIA 6032 HOST MAPPING
-    # ===========================================================================
-    echo "🔀 Registering application user inside ProxySQL runtime memory tables..."
-    mysql -h "${PROXYSQL_ADMIN_HOST}" -P "${PROXYSQL_ADMIN_PORT}" \
-          -u "${PROXYSQL_ADMIN_USER}" -p"${PROXYSQL_ADMIN_PASS}" <<PROXYEOF
-DELETE FROM mysql_users WHERE username = '${DB_USER}';
-INSERT INTO mysql_users (username, password, default_hostgroup, transaction_persistent, active) 
-VALUES ('${DB_USER}', '${DB_PASS}', 1, 1, 1);
-
-DELETE FROM mysql_users WHERE username = 'root';
-INSERT INTO mysql_users (username, password, default_hostgroup, transaction_persistent, active) 
-VALUES ('root', '${GALERA_ROOT_PASS}', 1, 1, 1);
-
-LOAD MYSQL USERS TO RUNTIME;
-SAVE MYSQL USERS TO DISK;
-PROXYEOF
-
-    PROXYSQL_STATUS=$?
-    if [ $PROXYSQL_STATUS -ne 0 ]; then
-        echo "⚠️ Warning: ProxySQL admin credential update failed with exit status ${PROXYSQL_STATUS}."
-        echo "   Continuing — database compilation handles migrations via direct node injection."
-    else
-        echo "✅ Cluster users synchronized in ProxySQL database layer tables."
-    fi
-
-    echo "🌐 Syncing database schema changes via direct Galera node link..."
+    echo "⏳ Holding 5s for cluster synchronization..."
+    sleep 5
 
     # ===========================================================================
-    # FIX 4: BENCH NEW-SITE WITH EXPLICIT DUAL PINNED SCHEMAS
+    # FIX A.3: PROXYSQL REGISTRATION ROUTED VIA PYMYSQL INSTEAD OF MYSQL CLI
+    # ===========================================================================
+    echo "🔀 Registering credentials inside ProxySQL memory tables via PyMySQL..."
+    python3 - << PYEOF
+import pymysql, sys
+try:
+    conn = pymysql.connect(host='${PROXYSQL_ADMIN_HOST}', port=${PROXYSQL_ADMIN_PORT}, user='${PROXYSQL_ADMIN_USER}', password='${PROXYSQL_ADMIN_PASS}')
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM mysql_users WHERE username = %s;", ('${DB_USER}',))
+        cur.execute("INSERT INTO mysql_users (username, password, default_hostgroup, transaction_persistent, active) VALUES (%s, %s, 1, 1, 1);", ('${DB_USER}', '${DB_PASS}'))
+        cur.execute("DELETE FROM mysql_users WHERE username = 'root';")
+        cur.execute("INSERT INTO mysql_users (username, password, default_hostgroup, transaction_persistent, active) VALUES (%s, %s, 1, 1, 1);", ('root', '${GALERA_ROOT_PASS}'))
+        cur.execute("LOAD MYSQL USERS TO RUNTIME;")
+        cur.execute("SAVE MYSQL USERS TO DISK;")
+    conn.commit()
+    conn.close()
+    print("✅ Cluster users synchronized in ProxySQL database layer tables.")
+except Exception as e:
+    print(f"⚠️ Warning: ProxySQL admin credential update failed via PyMySQL: {e}", file=sys.stderr)
+PYEOF
+
+    echo "🌐 Syncing site structures through relational engines..."
+
+    # ===========================================================================
+    # FIX B: BENCH NEW-SITE PINNED SCHEMA SYSTEM (Bypassing common_site_config Interception)
     # ===========================================================================
     SITE_SETUP_COMMANDS="cd /home/frappe/frappe-bench && \
         bench new-site ${FRAPPE_SITE_NAME} \
@@ -254,44 +258,40 @@ PROXYEOF
     echo "✅ Cluster schema sync complete!"
 
     # ===========================================================================
-    # FIX 5: REDIRECT PRODUCTION CONTAINER ROUTING BACK TO PROXYSQL OVERLAY
+    # ADJUSTMENT: RUN CONFIGS ONLY AFTER SUCCESSFUL NEW-SITE INITIALIZATION
+    # Point global bench default at ProxySQL for subsequent execution layers
     # ===========================================================================
-    SITE_CONFIG="/home/frappe/frappe-bench/sites/${FRAPPE_SITE_NAME}/site_config.json"
-    echo "🔧 Patching production target mappings back onto ProxySQL overlay mesh..."
+    echo "⚙️ Post-provisioning: Linking bench infrastructure to ProxySQL routing layers..."
+    su frappe -s /bin/bash << EOF
+export PATH="/home/frappe/.local/bin:/home/frappe/.pyenv/shims:/home/frappe/.pyenv/bin:\$PATH"
+cd /home/frappe/frappe-bench
+bench set-mariadb-host ${PROXYSQL_RUNTIME_HOST}
+bench set-config -g redis_cache redis://redis-cache:6379
+bench set-config -g redis_queue redis://redis-queue:6379
+bench set-config -g redis_socketio redis://redis-cache:6379
+EOF
 
+    # Re-verify and patch local specific site_config mappings back onto ProxySQL
+    SITE_CONFIG="/home/frappe/frappe-bench/sites/${FRAPPE_SITE_NAME}/site_config.json"
     if [ -f "$SITE_CONFIG" ]; then
         python3 - << PYEOF
 import json, sys
-
 config_path = "${SITE_CONFIG}"
-
 try:
     with open(config_path, "r") as f:
         config = json.load(f)
-
     config["db_host"] = "${PROXYSQL_RUNTIME_HOST}"
     config["db_port"] = ${PROXYSQL_RUNTIME_PORT}
-
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
-
-    print("✅ site_config.json patched: db_host → ${PROXYSQL_RUNTIME_HOST}:${PROXYSQL_RUNTIME_PORT}")
-    sys.exit(0)
+    print("✅ site_config.json patched to ProxySQL overlay network context.")
 except Exception as e:
-    print("⚠️ Patch failed: {}".format(e), file=sys.stderr)
-    sys.exit(1)
+    print(f"⚠️ Patch error: {e}")
 PYEOF
-        if [ $? -ne 0 ]; then
-            echo "⚠️ Warning: Automated site_config.json patch failed."
-        fi
-    else
-        echo "⚠️ Warning: site_config.json target footprint missing."
     fi
-
     chown frappe:frappe "$SITE_CONFIG" 2>/dev/null || true
-
 else
-    echo "ℹ️ Existing cluster initialization detected. Re-linking shared storage path..."
+    echo "ℹ️ Existing initialization footprint located. Re-linking persistence directories..."
     rm -rf /home/frappe/frappe-bench/sites
     ln -s /storage/sites /home/frappe/frappe-bench/sites
     chmod -R 777 /storage/sites /storage/logs
@@ -300,7 +300,7 @@ else
     chown -h frappe:frappe /home/frappe/frappe-bench/sites
 fi
 
-# Sync application maps across cluster nodes
+# Sync metrics manifest
 echo "frappe" > /storage/sites/apps.txt
 if [ -f "/home/frappe/apps.txt" ]; then
     cat /home/frappe/apps.txt >> /storage/sites/apps.txt
@@ -308,7 +308,7 @@ fi
 chmod 777 /storage/sites/apps.txt
 chown frappe:frappe /storage/sites/apps.txt 2>/dev/null || true
 
-# Generate process manager properties configurations
+# Generate production monitoring process layout profiles
 SUPERVISOR_CONFIG_FILE="/home/frappe/frappe-bench/config/supervisor.conf"
 rm -f "$SUPERVISOR_CONFIG_FILE"
 su frappe -s /bin/bash << EOF
@@ -317,7 +317,7 @@ cd /home/frappe/frappe-bench
 bench setup supervisor --skip-redis
 EOF
 
-# Adjust worker parameters for the unified image layout
+# Swap orchestration flags for uniform process layout handling
 NEW_WEB_COMMAND="/home/frappe/.local/bin/bench serve --port ${FRAPPE_INTERNAL_PORT}"
 NEW_WEB_DIRECTORY="/home/frappe/frappe-bench"
 TEMP_AWK_OUTPUT_FILE="${SUPERVISOR_CONFIG_FILE}.tmp"
@@ -336,14 +336,11 @@ if [ -f "$SUPERVISOR_CONFIG_FILE" ]; then
     }
     { print $0; }
     ' "$SUPERVISOR_CONFIG_FILE" > "$TEMP_AWK_OUTPUT_FILE"
-
     mv "$TEMP_AWK_OUTPUT_FILE" "$SUPERVISOR_CONFIG_FILE"
     chown frappe:frappe "$SUPERVISOR_CONFIG_FILE"
 fi
 
-# Clean up our temporary mock script binary before passing execution over to the live orchestrator
 rm -f /home/frappe/.local/bin/supervisorctl
-
 mkdir -p /etc/supervisor/conf.d/
 ln -sf "$SUPERVISOR_CONFIG_FILE" /etc/supervisor/conf.d/frappe-bench.conf
 
