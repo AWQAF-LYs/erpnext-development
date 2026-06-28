@@ -12,9 +12,11 @@ RUN apt-get update && \
 
 # 2. As 'frappe' user, install bench CLI and honcho via pipx:
 USER frappe
-RUN pipx ensurepath && \
-    pipx install --force frappe-bench && \
-    pipx install --force honcho
+RUN pipx ensurepath
+
+# Inject PIP configuration variables directly into the pipx environment
+RUN PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=10 pipx install --force frappe-bench && \
+    PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=10 pipx install --force honcho
 
 # 3. Copy your init script in place:
 USER root
